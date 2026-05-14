@@ -175,6 +175,46 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 15. `return(success, newArtifactId)`
     * `Host API` ⇢ `Proposal Manager`: The host platform confirms the state mutation, allowing the manager to finalize the proposal's lifecycle.
 
+### Scenario 3: Cascade with Intermediate Authorization
+**Context**: This scenario extends Scenario 2. After the user authorizes the "Derivator" agent's proposal, the system creates Artifact B. The actual appearance of Artifact B in the store triggers a second agent, the "Indexer". The Indexer evaluates the new artifact and proposes an update to an existing Artifact C.  
+
+**Architectural Justification**: This flow proves the system's ability to handle safely suspended cascades. The architecture explicitly prevents the Indexer from activating before the human authorizes Artifact B. If the user had rejected the Derivator's proposal, no effect would have been produced, no event would have fired, and the downstream cascade would have correctly been abandoned without leaving the system in an inconsistent state.
+
+![Sequence Diagram 3](sequence_diagram_scenario_3.png)
+
+#### 1. Participating Lifelines
+* `Host UI`: The human interface approving the first proposal.
+* `Proposal & Authorization Manager`: Applies the approved effect and receives the new proposal.
+* `Host API`: Executes the effect and emits the subsequent cascade event.
+* `Event Bus / Dispatcher`: Catches the new event and matches the downstream agent.
+* `Prompt Compiler`: Assembles the context.
+* `LLM Gateway`: Generates the non-deterministic proposal.
+* `Output Validator`: Structurally validates the proposal against type `C`.
+
+#### 2. Chronological Execution Flow
+1. `submitDecision(proposal_B, TOTAL_AUTHORIZATION)`
+    * `Host UI → Proposal Manager`: The user approves the pending creation of Artifact `B`.
+2. `executeEffect(createArtifactB)`
+    * `Proposal Manager → Host API`: The manager instructs the host to apply the approved write.
+3. `commitTransaction(Artifact B)`
+    * `Host API → Host API` (Self-Call): The host database physically saves the new artifact.
+4. `publishEvent(STATE_CHANGE, new_artifact_B)`
+    * `Host API → Event Bus`: The Cascade Trigger. The creation of the artifact emits a new event, resuming the causal chain.
+5. `compilePrompt(agentId: Indexer, event)`
+    * `Event Bus → Prompt Compiler`: The dispatcher matches the "Indexer" agent to this specific event.
+6. `executeLLM(compiledPrompt)`
+    * `Prompt Compiler → LLM Gateway`: The Indexer's context is sent to the AI.
+7. `return(rawString)`
+    * `LLM Gateway ⇢ Prompt Compiler`: The AI generates the proposed update for Artifact `C`.
+8. `validate(rawString, expectedType: UpdateOperation_C)`
+    * `Prompt Compiler → Output Validator`: The string is checked to ensure it conforms to a valid update patch for type `C`.
+9. `return(ProposedWrite: Update C)`
+    * `Output Validator ⇢ Prompt Compiler`: Validation passes.
+10. `suspendProposal(ProposedWrite: Update C)`
+    * `Prompt Compiler → Proposal Manager`: Because the Indexer wants to modify state, its proposal is forwarded to the manager.
+11. `setStatus(PENDING)`
+    * `Proposal Manager → Proposal Manager` (Self-Call): The second proposal is suspended. The cascade safely pauses again, awaiting the next human authorization.
+
 ## Architectural Data Model (RA-3)
 
 ![Class Diagram](class_diagram.png)
@@ -331,8 +371,8 @@ Represents a structural descriptor for an artifact or an agent's input/output va
 The fundamental unit of state within the platform's persistent store. Agents never interact with raw databases; they interact exclusively with these typed, bounded entities. It is characterized strictly by its identity, type, and state.
 
 * `id`: A unique string identifying this specific instance in the artifact store.
-* `type`: A direct reference to a TypeDefinition, binding this artifact to the platform's known structural rules.
-* `state`: A JSONObject containing the actual dynamic data payload of the artifact, which is guaranteed by the system to conform to the schemaDefinition of its associated type.
+* `type`: A direct reference to a `TypeDefinition`, binding this artifact to the platform's known structural rules.
+* `state`: A `JSONObject` containing the actual dynamic data payload of the artifact, which is guaranteed by the system to conform to the `schemaDefinition` of its associated type.
 
 ## Compiled System Prompt Model (RA-4)
 ### 1. The Canonical Format: Structured JSON Template
