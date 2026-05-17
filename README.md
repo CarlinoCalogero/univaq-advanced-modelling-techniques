@@ -45,8 +45,8 @@ These components sit outside the main pipeline, providing critical infrastructur
 #### Agent Registry
 The central repository for all static agent specifications. It manages the lifecycle and deterministic matching logic of the agents.  
 
-* `Exposes`: `IAgentManagement` (Allows dynamic registration/deregistration without restarting the platform) and `IAgentMatching` (Evaluates a given event against registered `TriggerConditions`).
-* `Requires`: `ITypeChecking` (Ensures declared input/output types are valid at the time of registration).
+* **Exposes**: `IAgentManagement` (Allows dynamic registration/deregistration without restarting the platform) and `IAgentMatching` (Evaluates a given event against registered `TriggerConditions`).
+* **Requires**: `ITypeChecking` (Ensures declared input/output types are valid at the time of registration).
 
 #### Type System
 The definitive source of truth for all structural descriptors in the platform, ensuring single and coherent typing across events, artifacts, and LLM outputs.
@@ -498,13 +498,57 @@ This section formally justifies the core structural and behavioral decisions mad
 * **Discarded Alternative:** Auto-execution with a rollback mechanism (letting the agent write to the database, then alerting a human to revert it if it was wrong).
 * **Justification:** Auto-execution is dangerous in enterprise platforms. A hallucinated deletion could trigger irreversible downstream effects (like sending emails or deleting external files) before the human has time to hit "rollback." The suspended intent model completely neutralizes AI unpredictability by enforcing absolute human gatekeeping prior to execution.
 
-## Scenarios
-### Scenario 7: Concrete Compilation Example (Longitudinal Learning)
-* Context: A "Reviewer" agent is triggered by a user submitting a new contribution. It uses a `WINDOW` memory policy (last 10 reviews) to detect if the same user systematically repeats violations.
+## Explicit Discussion of Scenarios
 
-* Compilation Process: The platform's Prompt Compiler fetches the agent's role, queries the artifact store for the guidelines (the slice), intercepts the incoming submission (the payload), and retrieves the historical trace of this user from the memory store.
+*Note: Scenarios 1, 2, 3, and 4 are explicitly addressed, justified, and modeled in the **Sequence Diagrams (RA-2)** section above.*
 
-Here is the exact compiled system prompt sent to the LLM Gateway for this execution:
+### Scenario 1: Synchronous Pre-Operation Validation
+**Context:** A Validator agent acts as an expert in model conformance. It is triggered before an operation modifies an artifact of type `T`. If its output (a `VerdictOfConformance`) is negative, the operation MUST NOT proceed.
+
+**Architectural Discussion:** As modeled in RA-2 Sequence Diagram 1, this scenario is handled via a blocking `PRE_INVOCATION` event. The Host API waits for the `Output Validator` to return the verdict. Because the proposal is purely a read/verdict and not a state-mutating write, the system safely bypasses the `Proposal Manager` and user authorization entirely.
+
+### Scenario 2: Asynchronous Derivation with Authorization
+**Context:** A Derivator agent triggers when an artifact of type `A` is finalized. It proposes creating a new artifact of type `B`. Because it is a write, it is suspended for user authorization.
+
+**Architectural Discussion:** As modeled in RA-2 Sequence Diagram 2, the `Event Bus` immediately acknowledges the `STATE_CHANGE` event to unblock the Host API. The agent's output is validated and then suspended by the `Proposal Manager` as a `PENDING` entity. If the user modifies the proposal before acceptance, the `Proposal Manager` explicitly records the `modifiedPayload` in the `Authorization` trace before executing the effect.
+
+### Scenario 3: Cascade with Intermediate Authorization
+**Context:** After the user authorizes the Derivator (Scenario 2) and Artifact `B` is created, a second Indexer agent is triggered to update Artifact `C`.
+
+**Architectural Discussion:** As modeled in RA-2 Sequence Diagram 3, the architecture breaks the cascade asynchronously. The Indexer cannot trigger until the Host API actually applies the creation of Artifact `B` and emits a *new* event. If the user had rejected the first proposal, no effect is applied, no event is fired, and the downstream cascade is cleanly aborted. The `Tracing Subsystem` reconstructs this entire chain via linked `triggeringEventId`s.
+
+### Scenario 4: Non-Conforming LLM Response
+**Context:** An agent declares output type `ClassDiagramPatch`, but the LLM returns free text or malformed JSON.
+
+**Architectural Discussion:** As modeled in RA-2 Sequence Diagram 4, the `Output Validator` intercepts the failure by checking it against the `Type System`. Architecturally, this is treated as a recoverable data-flow event, not a system exception. The Validator can execute a "retry with feedback" loop by re-prompting the compiler with the schema error. If it exhausts its retries, it explicitly logs a failure trace and safely aborts the cascade without crashing the host platform.
+
+### Scenario 5: Concurrency on the Same Event
+**Context:** Three agents react to the same event. One produces a non-conforming response, another proposes writes that are rejected by the user, and the third proposes only auto-applicable reads.
+
+**Architectural Discussion:** * **Ordering and Isolation:** The `Event Bus` acts as a fan-out dispatcher. When the single event arrives, it queries the `Agent Registry` and synchronously spawns three independent, asynchronous execution threads. 
+* **Failure Independence:** Because the architecture strictly enforces the isolation requirement, the `Output Validator` failing the first agent and the `Proposal Manager` recording a user rejection for the second agent have absolutely no technical bearing on the third agent. The third agent's auto-applicable read proceeds entirely unhindered.
+* **Trace Reflection:** The `Tracing Subsystem` receives telemetry from all three threads. The final trace will show one `Event` linked to three separate `ExecutionTrace` records: one marked `FAILED_VALIDATION`, one linked to a `Proposal` marked `REJECTED`, and one marked `SUCCESSFUL_READ`.
+
+### Scenario 6: Potential Loop
+**Context:** An agent triggers on a state-change of Artifact A and proposes a write that modifies Artifact A. The user repeatedly authorizes it.
+
+**Architectural Discussion:**
+* **Infinite Cascade Protection:** The system prevents infinite loops through two mechanisms. First, the `ExecutionMetrics` enforces a strict token/time budget per cascade. Second, the `Event Bus` tracks the "Cascade Depth" by passing the parent `EventID` to resulting events. If the depth exceeds a configurable platform maximum, the event is dropped.
+* **Budget Interaction:** Even with human authorization, the overarching cascade budget continues to decrement. If the user clicks "Approve" 50 times, the cascade budget will eventually exhaust, and the `Proposal Manager` will reject further effects, breaking the loop.
+* **User Signaling:** When the `Proposal Manager` detects that an agent is proposing a mutation on the exact same `ArtifactID` that triggered it, it flags the `Proposal` state with a `POTENTIAL_LOOP` warning, visually alerting the user in the UI before they authorize.
+
+### Scenario 7: Memory and Longitudinal Learning (Concrete Compilation Example)
+**Context:** A "Reviewer" agent keeps a windowed memory of the last 10 reviews. It detects systematic violations from a specific actor.
+
+**Architectural Discussion:**
+* **Memory Update:** After the agent's proposal is authorized and the effect is applied, the `Proposal Manager` calls `IMemoryWrite`. The current payload and the agent's generated feedback are appended to the agent's persistent `Memory` artifact.
+* **Window Overflow:** Because the policy is `WINDOW(10)`, the `Agent-Memory Storage` component acts as a FIFO (First-In-First-Out) queue. On the 11th invocation, the oldest historical record is permanently truncated from the memory artifact.
+* **User Inspection and Reset:** Because Memory is treated as a first-class `TypedArtifact` in the store, system administrators can query it via the Host API just like any other data. The UI exposes a "Clear Context" button that issues a `DELETE` mutation on the memory artifact, effectively resetting the agent to a blank slate.
+
+**Concrete Compilation Model:**
+To satisfy the requirement to demonstrate how memory is compiled, the `Prompt Compiler` fetches the agent's role, queries the artifact store for the guidelines (the slice), intercepts the incoming submission (the payload), and retrieves the historical trace of this user from the memory store. 
+
+Here is the exact canonical JSON template sent to the LLM Gateway:
 
 ```json
 {
@@ -565,9 +609,10 @@ Here is the exact compiled system prompt sent to the LLM Gateway for this execut
 }
 ```
 
-#### Explanation of the Example's Success
-By compiling the context in this manner, the architecture achieves several goals:
+### Scenario 8: Type Evolution
+**Context:** An agent's output type evolves in the store (a field becomes mandatory), but the agent's static specification still uses the old generation type.
 
-1. **Layer Isolation**: The LLM can easily distinguish between the rules it must enforce (the `slice`), the thing it is evaluating (the `payload`), and the historical context (the `memory`).
-2. **Observability**: This exact JSON string is saved in the `Execution Trace`. If the LLM makes a mistake, system administrators can read this exact payload to debug whether the prompt compilation was flawed or the LLM hallucinated.
-3. **Type Safety**: The `output_type_schema` explicitly instructs the LLM on what the platform's Output Validator expects, directly satisfying the requirement to handle typing coherently before LLM execution.
+**Architectural Discussion:**
+* **Discrepancy Detection:** This discrepancy is caught by the `Output Validator`. The `Prompt Compiler` uses the outdated schema in the prompt, so the LLM omits the new mandatory field. When the `Output Validator` passes the raw string to the `Type System`, it evaluates against the *live* store schema and fails the validation.
+* **Architectural Options:** The platform enforces strict **rejection**. The system cannot safely guess the missing mandatory data. The `Output Validator` aborts the cascade and marks the agent's status in the `Agent Registry` as `DEPRECATED_SCHEMA`, alerting administrators that the agent's specification must be manually updated.
+* **Store Protection:** Because no data bypasses the `Output Validator`, and no proposal is generated without a successful schema check, the malformed artifact is structurally blocked from ever reaching the `Proposal Manager` or the `Host Database`.
