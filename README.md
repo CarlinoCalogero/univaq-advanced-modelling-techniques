@@ -215,6 +215,47 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 11. `setStatus(PENDING)`
     * `Proposal Manager → Proposal Manager` (Self-Call): The second proposal is suspended. The cascade safely pauses again, awaiting the next human authorization.
 
+### Scenario 4: Non-Conforming LLM Response
+**Context**: An agent declares its output type as `ClassDiagramPatch`. During an invocation, the LLM returns a response that fails validation—it might be free text, malformed JSON, or structurally valid JSON containing non-existent identifiers.
+
+**Architectural Justification**: This scenario highlights the crucial boundary between non-deterministic AI generation and strictly typed system state. By intercepting the malformed response at the Output Validator, the architecture prevents platform corruption. Architecturally, an LLM validation failure is handled as a distinct, recoverable data-flow event rather than a fatal system crash.
+
+![Sequence Diagram 4](sequence_diagram_scenario_4.png)
+
+#### 1. Participating Lifelines
+* `Event Bus / Dispatcher`: Initiates the workflow and receives the final abort signal if recovery fails.
+* `Prompt Compiler`: Assembles the context and handles retry prompts.
+* `LLM Gateway`: The external AI generating the malformed response.
+* `Output Validator`: The primary actor in this scenario, detecting the anomaly and executing the recovery strategy.
+* `Type System`: Evaluates the schema conformance.
+* `Tracing Subsystem`: Explicitly included in this diagram to show how failures are distinctly logged for observability.
+
+#### 2. Chronological Execution Flow
+1. `executeLLM(compiledPrompt)`
+    * `Prompt Compiler` → `LLM Gateway`: The deterministic prompt is sent to the AI.
+2. `return(malformed_string)`
+    * `LLM Gateway` ⇢ `Prompt Compiler`: The AI hallucinates and returns free text instead of the requested JSON.
+3. `validate(malformed_string, ClassDiagramPatch)`
+    * `Prompt Compiler` → `Output Validator`: The string is passed downstream.
+4. `checkSchema(malformed_string, ClassDiagramPatch)`
+    * `Output Validator` → `Type System`: The Validator attempts to verify the structure.
+5. `return(isValid: false, error: "Parse Error")`
+    * `Type System` ⇢ `Output Validator`: The Type System strictly rejects the payload.
+6. `retryWithFeedback(error_details)`
+    * `Output Validator` → `Prompt Compiler`: **Recovery Strategy 1.** The Validator instructs the Compiler to try again, appending the exact validation error to the prompt to guide the LLM.
+7. `executeLLM(prompt_with_feedback)`
+    * `Prompt Compiler` → `LLM Gateway`: The second attempt is made.
+8. `return(invalid_identifiers_json)`
+    * `LLM Gateway` ⇢ `Prompt Compiler`: The LLM returns valid JSON, but it references artifacts that do not exist.
+9. `validate(invalid_identifiers_json, ClassDiagramPatch)` → `checkSchema(invalid_identifiers_json, ClassDiagramPatch)` → `return(isValid: false)`
+    * `Prompt Compiler` → `Output Validator` → `Type System`: The second validation fails during semantic checking.
+10. `markAsFailed(ValidationError)`
+    * `Output Validator` → `Output Validator` (Self-Call): **Recovery Strategy 2.** The budget is exhausted or the retry limit is reached; the Validator formally aborts the cascade.
+11. `logExecution(traceId, status: FAILED, rawResponses)`
+    * `Output Validator` → `Tracing Subsystem`: The explicit failure is logged, fulfilling the requirement that this is traced differently than a standard platform error.
+12. `return(CascadeAborted)`
+    * `Output Validator` ⇢ `Event Bus`: The original dispatcher is notified so it can release any pending resources.
+
 ## Architectural Data Model (RA-3)
 
 ![Class Diagram](class_diagram.png)
