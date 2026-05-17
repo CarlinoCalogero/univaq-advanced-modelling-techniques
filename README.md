@@ -454,6 +454,50 @@ Every compiled prompt follows this exact hierarchical schema:
 }
 ```
 
+## Design Rationale (RA-5)
+
+This section formally justifies the core structural and behavioral decisions made in the LLM Agent Platform's architecture. Each decision is evaluated against discarded alternatives to demonstrate how the chosen design strictly satisfies the system's functional and non-functional requirements.
+
+### 1. Event Model: Decoupled Publish/Subscribe vs. Direct Invocation
+* **Chosen Architecture:** A decoupled Event Bus where the host platform publishes `STATE_CHANGE` or `PRE_INVOCATION` events, completely unaware of which agents (if any) are listening.
+* **Discarded Alternative:** Direct point-to-point API invocation (where the host platform's code explicitly calls `AgentManager.wakeUp(agentId)`).
+* **Justification:** Direct invocation tightly couples the host platform's business logic to the agent ecosystem, requiring code deployments every time a new agent is added. The publish/subscribe Event Model satisfies the extensibility requirement, allowing agents to be dynamically registered or deregistered without altering the host platform's source code.
+
+### 2. Trigger Language: Declarative Conditions vs. Imperative Scripts
+* **Chosen Architecture:** Agents define their activation rules using declarative `TriggerCondition` objects (e.g., matching exact event types and evaluating simple boolean expressions on the payload).
+* **Discarded Alternative:** Allowing agents to provide imperative scripts (e.g., Javascript functions like `shouldWakeUp(event)`) to be executed by the Event Bus.
+* **Justification:** Imperative scripts introduce severe security and performance vulnerabilities; a poorly written script could cause infinite loops or memory leaks inside the Event Bus. Declarative conditions guarantee structural predictability. They can be statically analyzed, indexed for rapid matching, and evaluated in strictly bounded time.
+
+### 3. Type System: Centralized Strict Schemas vs. Schema-less JSON
+* **Chosen Architecture:** A centralized `Type System` enforcing strict, polymorphic schemas (`TypeDefinition`) for all inputs, outputs, and artifacts.
+* **Discarded Alternative:** Schema-less, dynamic JSON payloads where the LLM defines the structure on the fly.
+* **Justification:** LLMs are prone to hallucinating non-existent fields or altering data types. A schema-less approach would eventually corrupt the host platform's database. By forcing every artifact and proposal through a strict schema validation check, the architecture ensures absolute data integrity and allows the UI to programmatically render dynamic authorization forms based on known types.
+
+### 4. Cascade Policy: Asynchronous Suspension vs. Synchronous Chaining
+* **Chosen Architecture:** Cascades are naturally broken into asynchronous steps. Agent 1 executes and proposes an effect. The cascade completely suspends. Once authorized, the Host API applies the effect and emits a *new* event, waking up Agent 2.
+* **Discarded Alternative:** Synchronous, in-memory chaining (where Agent 1 passes its output directly to Agent 2 in a single, uninterrupted thread).
+* **Justification:** Synchronous chaining violates the human-in-the-loop requirement for state mutations. It also risks catastrophic failure; if Agent 3 in a 5-agent chain fails, the entire transaction must be rolled back. Asynchronous, event-driven suspension ensures that cascades are safely partitioned, inspectable at every step, and heavily resilient to LLM timeouts.
+
+### 5. Prompt Format: Structured JSON vs. Free-Text / XML
+* **Chosen Architecture:** The Prompt Compiler constructs a singular, hierarchical JSON object separating `system_directive`, `output_type_schema`, and `context_layers`.
+* **Discarded Alternative:** String concatenation using Markdown delimiters (e.g., `### Context`) or XML tags.
+* **Justification:** Free-text concatenation is highly vulnerable to Prompt Injection, where malicious user data can "break out" of its delimiter and overwrite system instructions. Forcing the LLM to parse a strict JSON tree structurally isolates the `role` from untrusted `payload` data. Furthermore, modern LLMs are optimized for JSON parsing, heavily increasing structural predictability.
+
+### 6. Non-Conforming Response Strategy: Data-Flow Recovery vs. System Exceptions
+* **Chosen Architecture:** Malformed LLM outputs are intercepted by the `Output Validator`, which triggers an internal retry loop appending the schema error as feedback, and ultimately logs a graceful `CascadeAborted` signal if it fails.
+* **Discarded Alternative:** Letting the JSON parsing library throw a fatal system exception that crashes the current thread or returns an HTTP 500 to the host.
+* **Justification:** AI non-determinism means malformed responses are an expected operational reality, not a critical software bug. Treating them as fatal exceptions clutters observability logs and risks host platform instability. The chosen strategy handles non-conformance as a safe, isolated, and recoverable data-flow event.
+
+### 7. Memory Policy: Configurable Bounding vs. Unbounded Context
+* **Chosen Architecture:** Agents are assigned explicit memory policies (`STATELESS`, `WINDOW`, or `SUMMARIZING`) that strictly bound how much historical data is injected into the prompt.
+* **Discarded Alternative:** Unbounded context (appending the agent's entire execution history into the prompt every time).
+* **Justification:** Unbounded context will inevitably exceed the LLM provider's maximum token limit, causing the agent to permanently crash once it lives long enough. Explicit bounding policies guarantee long-term stability and allow administrators to control API token costs.
+
+### 8. Authorization Model: Suspended Intent vs. Auto-Execution Rollbacks
+* **Chosen Architecture:** Agents output a `ProposedAction` which acts as a passive, suspended intent. State mutation is completely blocked until the `Proposal Manager` receives explicit human approval.
+* **Discarded Alternative:** Auto-execution with a rollback mechanism (letting the agent write to the database, then alerting a human to revert it if it was wrong).
+* **Justification:** Auto-execution is dangerous in enterprise platforms. A hallucinated deletion could trigger irreversible downstream effects (like sending emails or deleting external files) before the human has time to hit "rollback." The suspended intent model completely neutralizes AI unpredictability by enforcing absolute human gatekeeping prior to execution.
+
 ## Scenarios
 ### Scenario 7: Concrete Compilation Example (Longitudinal Learning)
 * Context: A "Reviewer" agent is triggered by a user submitting a new contribution. It uses a `WINDOW` memory policy (last 10 reviews) to detect if the same user systematically repeats violations.
