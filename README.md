@@ -1,6 +1,14 @@
+# Architectural Design Specification
+A Generic Platform for Event-Driven, LLM-Based Agents
+
+**Prepared By:**
+* **Name:** Calogero Carlino  
+* **Student ID:** 302154  
+* **Email:** calogero.carlino@student.univaq.it  
+
 ## Architectural Component Model (RA-1)
 
-![Class Diagram](component_diagram.png)
+![Class Diagram](diagrams/component_diagram/component_diagram.png)
 
 The architecture of the LLM Agent Platform is structured as a highly cohesive, loosely coupled subsystem layered on top of an existing host environment. To satisfy the non-functional requirements of LLM-provider independence and structural predictability, all internal and external communication occurs strictly through explicitly defined interfaces.
 
@@ -79,7 +87,7 @@ To explicitly define the domain limits, the architecture identifies the external
 
 **Architectural Justification**: This scenario demonstrates a strictly synchronous execution flow. Furthermore, because the agent's output is purely a read-based evaluation (a verdict) rather than a proposed state mutation (a write), the architecture explicitly bypasses the Proposal & Authorization Manager, requiring no human-in-the-loop.  
 
-![Sequence Diagram 1](sequence_diagram_scenario_1.png)
+![Sequence Diagram 1](diagrams/sequence_diagrams/sequence_diagram_scenario_1.png)
 
 #### 1. Participating Lifelines
 The following components are actively engaged in this specific cascade:
@@ -130,7 +138,7 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 
 **Architectural Justification**: This scenario demonstrates the system's asynchronous execution capabilities and the fundamental human-in-the-loop gatekeeping mechanism. By separating the agent's proposal from the system's actual effect, the architecture guarantees that LLM non-determinism cannot unilaterally corrupt the platform's state.
 
-![Sequence Diagram 2](sequence_diagram_scenario_2.png)
+![Sequence Diagram 2](diagrams/sequence_diagrams/sequence_diagram_scenario_2.png)
 
 #### 1. Participating Lifelines
 
@@ -180,7 +188,7 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 
 **Architectural Justification**: This flow proves the system's ability to handle safely suspended cascades. The architecture explicitly prevents the Indexer from activating before the human authorizes Artifact B. If the user had rejected the Derivator's proposal, no effect would have been produced, no event would have fired, and the downstream cascade would have correctly been abandoned without leaving the system in an inconsistent state.
 
-![Sequence Diagram 3](sequence_diagram_scenario_3.png)
+![Sequence Diagram 3](diagrams/sequence_diagrams/sequence_diagram_scenario_3.png)
 
 #### 1. Participating Lifelines
 * `Host UI`: The human interface approving the first proposal.
@@ -220,7 +228,7 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 
 **Architectural Justification**: This scenario highlights the crucial boundary between non-deterministic AI generation and strictly typed system state. By intercepting the malformed response at the Output Validator, the architecture prevents platform corruption. Architecturally, an LLM validation failure is handled as a distinct, recoverable data-flow event rather than a fatal system crash.
 
-![Sequence Diagram 4](sequence_diagram_scenario_4.png)
+![Sequence Diagram 4](diagrams/sequence_diagrams/sequence_diagram_scenario_4.png)
 
 #### 1. Participating Lifelines
 * `Event Bus / Dispatcher`: Initiates the workflow and receives the final abort signal if recovery fails.
@@ -258,7 +266,7 @@ While not explicitly drawn as synchronous lifelines to preserve diagram readabil
 
 ## Architectural Data Model (RA-3)
 
-![Class Diagram](class_diagram.png)
+![Class Diagram](diagrams/class_diagram/class_diagram.png)
 
 The proposed data model provides a strongly typed, structurally predictable foundation for the event-driven, LLM-based agent platform. It explicitly separates static agent definitions from dynamic runtime execution and enforces a strict boundary between an agent’s proposed actions and their actual effects on the system state. The model is designed to guarantee total observability of the cascade chain.
 
