@@ -658,7 +658,7 @@ This repository serves as an architectural reference and evaluation artifact. It
 ### Author & Contributors:
 
 <a href="https://github.com/CarlinoCalogero/univaq-advanced-modelling-techniques/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=CarlinoCalogero/univaq-advanced-modelling-techniques" alt="Contributors" />
+  <img src="https://contrib.rocks/image?repo=CarlinoCalogero/univaq-advanced-modelling-techniques&v=1" alt="Contributors" />
 </a>
 
 * **Calogero Carlino** - *Architectural Design, Models & Documentation* - [@CarlinoCalogero](https://github.com/CarlinoCalogero)
@@ -695,11 +695,11 @@ University of L'Aquila
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-[contributors-shield]: https://img.shields.io/github/contributors/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge
+[contributors-shield]: https://img.shields.io/github/contributors/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge&color=blue
 [contributors-url]: https://github.com/CarlinoCalogero/univaq-advanced-modelling-techniques/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge
+[forks-shield]: https://img.shields.io/github/forks/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge&color=blue
 [forks-url]: https://github.com/CarlinoCalogero/univaq-advanced-modelling-techniques/network/members
-[stars-shield]: https://img.shields.io/github/stars/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge
+[stars-shield]: https://img.shields.io/github/stars/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge&color=blue
 [stars-url]: https://github.com/CarlinoCalogero/univaq-advanced-modelling-techniques/stargazers
 [issues-shield]: https://img.shields.io/github/issues/CarlinoCalogero/univaq-advanced-modelling-techniques.svg?style=for-the-badge
 [issues-url]: https://github.com/CarlinoCalogero/univaq-advanced-modelling-techniques/issues
